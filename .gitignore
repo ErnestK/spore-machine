@@ -1,0 +1,20 @@
+# Build output (go build ./cmd/... from repo root, or an explicit -o bin/)
+/bin/
+/node
+/chronicle
+/keygen
+/primogenitor
+*.test
+*.exe
+
+# Local runtime artifacts from manual runs (not created by `go test`, which
+# uses t.TempDir() and cleans up after itself)
+*.db
+*.db-journal
+*.gif
+*.mp4
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

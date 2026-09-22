@@ -1,0 +1,15 @@
+version: "2"
+
+linters:
+  default: standard
+  exclusions:
+    rules:
+      # Deferred Close()/Flush() on files, gRPC conns, and bbolt stores carry
+      # no actionable consequence here (nothing meaningful to do with a close
+      # error at that point) — standard golangci-lint exclusion.
+      # fs.Parse() on a flag.ExitOnError FlagSet never actually returns an
+      # error (it calls os.Exit internally on parse failure), so checking it
+      # is dead code.
+      - linters:
+          - errcheck
+        text: "Error return value of `(.*\\.Close|.*\\.Flush|fs\\.Parse)` is not checked"

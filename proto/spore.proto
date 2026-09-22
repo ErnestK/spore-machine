@@ -1,0 +1,215 @@
+syntax = "proto3";
+
+package spore;
+
+option go_package = "sporemachine/internal/sporepb";
+
+// ===== Genesis / spawn config =====
+
+enum SpawnMode {
+  PROCESS = 0; // implemented in v0
+  DOCKER = 1;  // reserved, not implemented
+}
+
+message SpawnRules {
+  int32 max_generation_depth = 1;
+  int32 spawn_interval_seconds = 2;
+  SpawnMode spawn_mode = 3;
+  int32 max_children_per_batch = 4; // 0 = default (5)
+  int32 batch_pause_seconds = 5;    // 0 = default (900 = 15 min)
+}
+
+message Genesis {
+  string network_id = 1;
+  bytes owner_public_key = 2;              // Ed25519
+  bytes metrics_encryption_public_key = 3; // X25519
+  SpawnRules spawn_rules = 4;
+}
+
+// ===== Data =====
+
+enum DataType {
+  FILE = 0;
+  COMMAND = 1;
+}
+
+message Command {
+  string bash_command = 1;
+}
+
+message SubmitDataRequest {
+  DataType type = 1;
+  bytes content = 2;
+  bytes signature = 3; // owner's Ed25519 signature over content
+}
+
+message SubmitAck {
+  bool accepted = 1;
+  bytes object_id = 2; // hash(content)
+}
+
+message StoredObject {
+  DataType type = 1;
+  bytes content = 2;
+  bytes signature = 3;
+}
+
+// ===== Termination — separate path, not content-addressed =====
+
+message TerminateRequest {
+  bytes signature = 1; // owner's signature over network_id + "TERMINATE"
+}
+
+message TerminateAck {
+  bool received = 1;
+}
+
+// ===== Membership / SWIM =====
+
+enum MemberStatus {
+  ALIVE = 0;
+  SUSPECT = 1;
+  DEAD = 2;
+}
+
+message MemberState {
+  string address = 1;
+  MemberStatus status = 2;
+  int64 incarnation = 3;
+}
+
+message PingRequest {
+  string from_address = 1;
+  repeated MemberState piggyback = 2;
+}
+
+message PingResponse {
+  repeated MemberState piggyback = 2;
+}
+
+message IndirectPingRequest {
+  string target_address = 1;
+}
+
+message IndirectPingResponse {
+  bool acked = 1;
+}
+
+// ===== Unified round: root hashes + peer exchange =====
+
+message GossipExchange {
+  bytes data_root_hash = 1;
+  bytes metrics_root_hash = 2;
+  repeated string known_peers = 3;
+}
+
+// ===== Merkle sync: batched per-level walk =====
+
+enum TreeKind {
+  DATA = 0;
+  METRICS = 1;
+}
+
+// A tree node at fixed depth 8; the low `depth` bits of prefix_bits are
+// meaningful.
+message MerklePath {
+  uint32 depth = 1;
+  uint32 prefix_bits = 2;
+}
+
+message MerkleChildrenRequest {
+  TreeKind tree = 1;
+  repeated MerklePath paths = 2;
+}
+
+message MerkleNodeHashes {
+  bytes left_hash = 1;
+  bytes right_hash = 2;
+}
+
+message MerkleChildrenResponse {
+  repeated MerkleNodeHashes nodes = 1; // same order as request paths
+}
+
+message MerkleLeafRequest {
+  TreeKind tree = 1;
+  repeated uint32 group_prefixes = 2;
+}
+
+message MerkleLeafGroup {
+  uint32 group_prefix = 1;
+  repeated bytes object_ids = 2; // sorted
+}
+
+message MerkleLeafResponse {
+  repeated MerkleLeafGroup groups = 1;
+}
+
+message GetObjectsRequest {
+  TreeKind tree = 1;
+  repeated bytes object_ids = 2;
+}
+
+message GetObjectsResponse {
+  repeated StoredObject objects = 1;
+}
+
+// ===== Metrics =====
+
+message CommandStats {
+  int64 stored = 1;
+  int64 succeeded = 2;
+  int64 failed = 3;
+  int64 exec_ms_max = 4;
+  int64 exec_ms_min = 5;
+  double exec_ms_avg = 6;
+  int64 exec_ms_median = 7;
+}
+
+message StorageStats {
+  int64 object_count = 1;
+  int64 total_bytes = 2;
+  int64 file_size_max = 3;
+  int64 file_size_min = 4;
+}
+
+message MerkleSyncStats {
+  int64 rounds = 1;
+  int64 objects_synced = 2;
+  int64 bytes_synced = 3;
+}
+
+message MetricsSnapshot {
+  string node_id = 1;
+  int64 timestamp_unix = 2;
+  string created_at_utc = 3;
+  string parent_id = 4; // empty for a node started directly by Primogenitor
+
+  double cpu_percent = 5;
+  int64 memory_rss_bytes = 6;
+  int64 goroutines = 7;
+
+  int64 members_alive = 8;
+  int64 members_suspect = 9;
+  int64 members_dead = 10;
+
+  CommandStats commands = 11;
+  StorageStats storage = 12;
+  MerkleSyncStats merkle_sync = 13;
+}
+
+// ===== Node service =====
+
+service NodeService {
+  rpc SubmitData(SubmitDataRequest) returns (SubmitAck);
+  rpc SubmitTerminate(TerminateRequest) returns (TerminateAck);
+
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc PingIndirect(IndirectPingRequest) returns (IndirectPingResponse);
+
+  rpc GossipRound(GossipExchange) returns (GossipExchange);
+
+  rpc MerkleChildren(MerkleChildrenRequest) returns (MerkleChildrenResponse);
+  rpc MerkleLeaf(MerkleLeafRequest) returns (MerkleLeafResponse);
+  rpc GetObjects(GetObjectsRequest) returns (GetObjectsResponse);
+}
